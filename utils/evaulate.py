@@ -7,9 +7,8 @@ import torch.nn.functional as F
 def compute_loss_para(adj, device):
     pos_weight = ((adj.shape[0] * adj.shape[0] - adj.sum()) / adj.sum())
     norm = adj.shape[0] * adj.shape[0] / float((adj.shape[0] * adj.shape[0] - adj.sum()) * 2)
-    weight_mask = adj.view(-1) == 1
-    weight_tensor = torch.ones(weight_mask.size(0)).to(device)
-    weight_tensor[weight_mask] = pos_weight
+    # Keep a scalar pos_weight to avoid an extra n×n weight tensor (~2GB on Yelp).
+    weight_tensor = torch.tensor(pos_weight, dtype=torch.float32, device=device)
     return weight_tensor, norm
 
 
@@ -43,7 +42,21 @@ def get_scores(edges_pos, edges_neg, adj_rec):
 
 
 def compute_vgae_loss(logits, adj, norm, vgae_model, weight_tensor):
-    vgae_loss = norm * F.binary_cross_entropy(logits.view(-1), adj.view(-1), weight=weight_tensor)
+    # Row-chunked weighted BCE to avoid multi-GiB temporaries on large graphs.
+    eps = 1e-7
+    n = logits.size(0)
+    chunk = 1024
+    total = logits.new_zeros(())
+    numel = 0
+    for i in range(0, n, chunk):
+        rows = slice(i, min(i + chunk, n))
+        probs = logits[rows].clamp(eps, 1.0 - eps)
+        target = adj[rows]
+        pos_term = target * (-torch.log(probs))
+        neg_term = (1.0 - target) * (-torch.log(1.0 - probs))
+        total = total + (weight_tensor * pos_term + neg_term).sum()
+        numel += probs.numel()
+    vgae_loss = norm * (total / numel)
     kl_divergence = 0.5 / logits.size(0) * (
             1 + 2 * vgae_model.log_std - vgae_model.mean ** 2 - torch.exp(vgae_model.log_std) ** 2).sum(
         1).mean()
@@ -53,7 +66,7 @@ def compute_vgae_loss(logits, adj, norm, vgae_model, weight_tensor):
 
 def adjust_loss(elbo, vgae_loss, infer_loss, reweight=True):
     if reweight:
-        loss = 0.1 * (elbo + vgae_loss) + 0.01*infer_loss
+        loss = 0.1 * (elbo + vgae_loss) + 0.01 * infer_loss
     else:
         loss = elbo + 0.1 * vgae_loss
     return loss

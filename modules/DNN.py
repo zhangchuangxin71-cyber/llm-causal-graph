@@ -24,13 +24,8 @@ class DNN(nn.Module):
         self.emb_layer = nn.Linear(self.time_emb_dim, self.time_emb_dim)
 
         if self.time_type == "cat":
-            # in_dims_temp = [self.in_dims[0] + self.time_emb_dim + self.env_size] + self.in_dims[1:]
-            in_dims_temp = [self.in_dims[0] + 2 + self.env_size] + self.in_dims[1:]
-            # print("DNN里in_dims_temp的维度")
-            # print(in_dims_temp)
-            # print(self.in_dims[0])
-            # print(self.in_dims[1:])
-            # print(self.time_emb_dim)
+            # Concatenate [x, time_emb, env]; keep dims consistent when emd/hidden change.
+            in_dims_temp = [self.in_dims[0] + self.time_emb_dim + self.env_size] + self.in_dims[1:]
         else:
             raise ValueError("Unimplemented timestep embedding type %s" % self.time_type)
         out_dims_temp = self.out_dims

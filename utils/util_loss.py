@@ -21,30 +21,31 @@ def l2_reg_loss(reg, *args):
     return emb_loss * reg
 
 
-def get_user_item_matrix(graph):
+def get_user_item_matrix(graph, num_user=None, num_item=None):
     edge_index = torch.stack(graph.edges())
 
-    max_user = max(set(edge_index[0].tolist()))
-    max_item = max(set(edge_index[1].tolist()))
+    if num_user is None or num_item is None:
+        max_user = max(set(edge_index[0].tolist()))
+        num_user = len(set(edge_index[0].tolist()))
+        num_item = len(set(edge_index[1].tolist()))
+        item_offset = max_user + 1
+    else:
+        item_offset = num_user
 
-    num_user = len(set(edge_index[0].tolist()))
-    num_item = len(set(edge_index[1].tolist()))
     print("the number of users: {0}".format(num_user))
     print("the number of items: {0}".format(num_item))
 
     row, col, entries = [], [], []
     for edge in edge_index.t().tolist():
-        row.append(edge[0])
-        col.append(edge[1] - max_user - 1)
+        u, v = edge[0], edge[1]
+        if u >= item_offset:
+            continue  # skip non user->item orientation if any
+        row.append(u)
+        col.append(v - item_offset)
         entries.append(1.0)
-    num_max = find_min_number(col)
 
     interaction_mat = sp.csr_matrix((entries, (row, col)), shape=(num_user, num_item),
                                     dtype=np.float32)
-
-    # save_sparse_matrix_to_pickle(interaction_mat, 'interaction_matrix.pkl')
-    # print("最大用户编号{0}".format(max_user))
-    # print("最大物品编号{0}".format(find_max_number(col)))
 
     return interaction_mat, num_user, num_item
 

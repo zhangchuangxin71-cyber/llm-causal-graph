@@ -31,4 +31,10 @@ parser.add_argument('--sampling_noise', type=bool, default=False, help='sampling
 parser.add_argument('--sampling_steps', type=int, default=100, help='steps for sampling/denoising')
 parser.add_argument('--reweight', type=bool, default=True, help='assign different weight to different timestep or not')
 
+# Original train.py uses Graph_Editer(4, ...) and for k in range(3).
+parser.add_argument('--env_k', type=int, default=4, help='Number of editor parameter banks K (paper/code: 4).')
+parser.add_argument('--env_num', type=int, default=3, help='Environments sampled per EERM step (paper/code: 3).')
+parser.add_argument('--edit_noise', type=float, default=0.8,
+                    help='Graph edit noise ratio (official default 0.8; applied vs #edges for memory).')
+
 args = parser.parse_args()
