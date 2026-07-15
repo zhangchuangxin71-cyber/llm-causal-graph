@@ -36,5 +36,8 @@ parser.add_argument('--env_k', type=int, default=4, help='Number of editor param
 parser.add_argument('--env_num', type=int, default=3, help='Environments sampled per EERM step (paper/code: 3).')
 parser.add_argument('--edit_noise', type=float, default=0.8,
                     help='Graph edit noise ratio (official default 0.8; applied vs #edges for memory).')
+parser.add_argument('--rec_epochs', type=int, default=1,
+                    help='Number of BPR passes over train interactions each outer epoch.')
+parser.add_argument('--rec_lr', type=float, default=0.001, help='Learning rate for LightGCN BPR stage.')
 
 args = parser.parse_args()

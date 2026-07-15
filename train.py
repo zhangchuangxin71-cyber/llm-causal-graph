@@ -101,11 +101,14 @@ def train_model(model, optimizers, device, datasets, user_item_train_inter, num_
     bestPerformance = []
     measure_result = {}
     for epoch in range(args.epochs):
-        total_loss, rec_loss = run_epoch(model, optimizers, feats, edge_index, adj, norm, weight_tensor,
-                                         device, epoch, user_item_train_inter, num_user, num_item, train_graph)
+        total_loss, rec_loss, rec_model = run_epoch(
+            model, optimizers, feats, edge_index, adj, norm, weight_tensor,
+            device, epoch, user_item_train_inter, num_user, num_item, train_graph)
         print(f"Epoch {epoch + 1}/{args.epochs}, Loss: {total_loss}, Rec_loss: {rec_loss}")
 
-        measure, best_epoch = test_epoch(datasets, epoch, model, device, bestPerformance, num_user, num_item)
+        # Use BPR-trained LightGCN for ranking (released code discarded it and re-inited at test).
+        measure, best_epoch = test_epoch(
+            datasets, epoch, model, device, bestPerformance, num_user, num_item, rec_model=rec_model)
         measure_result[epoch] = measure
         torch.cuda.empty_cache()
 
@@ -193,30 +196,31 @@ def run_epoch(models, optimizers, feats, edge_index, adj, norm, weight_tensor, d
 
     model = LGCN_Encoder(num_user, 3, norm_adj, user_embeddings, item_embeddings)
     rec_model = model.to(device)
-    optimizer = torch.optim.Adam(rec_model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(rec_model.parameters(), lr=args.rec_lr)
 
     dataset = UserItemDataset(user_item_train_inter)
     dataloader = DataLoader(dataset, batch_size=2048, shuffle=True)  # Reduce batch size
-    for batch in dataloader:
-        user_id, pos_item_id, neg_item_id = [x.to(device) for x in batch]
-        all_embeddings = rec_model().to(device)
+    for _ in range(max(args.rec_epochs, 1)):
+        for batch in dataloader:
+            user_id, pos_item_id, neg_item_id = [x.to(device) for x in batch]
+            all_embeddings = rec_model().to(device)
 
-        user_embedding = all_embeddings[user_id]
-        pos_item_embedding = all_embeddings[pos_item_id]
-        neg_item_embedding = all_embeddings[neg_item_id]
+            user_embedding = all_embeddings[user_id]
+            pos_item_embedding = all_embeddings[pos_item_id]
+            neg_item_embedding = all_embeddings[neg_item_id]
 
-        rec_loss = bpr_loss(user_embedding, pos_item_embedding, neg_item_embedding) + \
-                   l2_reg_loss(1e-3, user_embedding, pos_item_embedding, neg_item_embedding)
-        optimizer.zero_grad()
-        rec_loss.backward()
-        optimizer.step()
+            rec_loss = bpr_loss(user_embedding, pos_item_embedding, neg_item_embedding) + \
+                       l2_reg_loss(1e-3, user_embedding, pos_item_embedding, neg_item_embedding)
+            optimizer.zero_grad()
+            rec_loss.backward()
+            optimizer.step()
 
-        total_rec_loss += rec_loss.item()
-        torch.nn.utils.clip_grad_norm_(diffusion_model.parameters(), 0.7)
+            total_rec_loss += rec_loss.item()
+            torch.nn.utils.clip_grad_norm_(diffusion_model.parameters(), 0.7)
 
-        torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
 
-    return pretrain_loss, total_rec_loss
+    return pretrain_loss, total_rec_loss, rec_model
 
 
 def _env_forward(vgae_model, diffusion_model, mlp_model, generator, env_infer_model,
@@ -246,17 +250,18 @@ def _env_forward(vgae_model, diffusion_model, mlp_model, generator, env_infer_mo
     return loss, log_p
 
 
-def test_epoch(datasets, epoch, models, device, bestPerformance, num_user, item_user):
+def test_epoch(datasets, epoch, models, device, bestPerformance, num_user, item_user, rec_model=None):
     test_graph = datasets['test']
-    feats, _, edge_index, _ = prepare_data(test_graph, device)
-    all_embeddings = generate_embeddings(models[0], models[1], models[2], models[4], feats, edge_index, 1, device)
-    user_embeddings = all_embeddings[:num_user]
-    item_embeddings = all_embeddings[num_user:]
-    ui_adj = generate_interaction_matrix_from_dgl(test_graph, num_user, item_user)
-    norm_adj = normalize_graph_mat(ui_adj)
-    del ui_adj
-    model = LGCN_Encoder(num_user, 3, norm_adj, user_embeddings, item_embeddings)
-    rec_model = model.to(device)
+    if rec_model is None:
+        feats, _, edge_index, _ = prepare_data(test_graph, device)
+        all_embeddings = generate_embeddings(models[0], models[1], models[2], models[4], feats, edge_index, 1, device)
+        user_embeddings = all_embeddings[:num_user]
+        item_embeddings = all_embeddings[num_user:]
+        ui_adj = generate_interaction_matrix_from_dgl(test_graph, num_user, item_user)
+        norm_adj = normalize_graph_mat(ui_adj)
+        del ui_adj
+        model = LGCN_Encoder(num_user, 3, norm_adj, user_embeddings, item_embeddings)
+        rec_model = model.to(device)
 
     with torch.no_grad():
         all_embeddings = rec_model().to(device)
